@@ -1,48 +1,73 @@
 import streamlit as st
 import pandas as pd
-from io import BytesIO
+import os
 
-# Função para baixar Excel no Streamlit
-def to_excel(df):
-    output = BytesIO()
-    writer = pd.ExcelWriter(output, engine='openpyxl')
-    df.to_excel(writer, index=False, sheet_name='Medições')
-    writer.save()
-    processed_data = output.getvalue()
-    return processed_data
+st.title("Medição de Obra - App")
 
-st.title('App de Medição de Obra - Mensal')
+# --- Caminho da planilha ---
+DATA_DIR = "data"
+ARQUIVO_PLANILHA = os.path.join(DATA_DIR, "medicao.xlsx")
 
-# Lê a planilha base
-try:
-    base_df = pd.read_excel('medicao_base.xlsx')
-except Exception as e:
-    st.error(f'Erro ao ler a planilha base: {e}')
+# Cria a pasta se não existir
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# --- Leitura da planilha ---
+@st.cache_data
+def carregar_planilha(caminho):
+    df = pd.read_excel(caminho)
+    # Ajusta colunas para minúsculas e sem espaços
+    df.columns = df.columns.str.strip().str.lower()
+    return df
+
+if not os.path.exists(ARQUIVO_PLANILHA):
+    st.error(f"Arquivo {ARQUIVO_PLANILHA} não encontrado! Coloque a planilha no diretório 'data'.")
     st.stop()
 
-st.write('Planilha base carregada com sucesso!')
-st.write(base_df)
+df = carregar_planilha(ARQUIVO_PLANILHA)
 
-# Criar colunas para digitar medição para cada linha da planilha base
-st.header('Informe a medição mensal para cada serviço e local')
+# Mostrar colunas para depurar
+st.write("Colunas encontradas na planilha:", df.columns.tolist())
 
-medicoes = []
+# --- Verifica se colunas necessárias existem ---
+colunas_necessarias = ['local', 'serviço', 'unidade']
 
-for idx, row in base_df.iterrows():
-    st.write(f"**Local:** {row['Local']} - **Serviço:** {row['Serviço']} - **Unidade:** {row['Unidade']}")
-    valor = st.number_input(f'Medição ({row["Unidade"]})', min_value=0.0, format="%.2f", key=f'med_{idx}')
-    medicoes.append(valor)
+if not all(col in df.columns for col in colunas_necessarias):
+    st.error(f"A planilha deve conter as colunas: {colunas_necessarias}")
+    st.stop()
 
-# Botão para exportar
-if st.button('Exportar medições para Excel'):
-    df_export = base_df.copy()
-    df_export['Medição'] = medicoes
+# --- Seleção Local e Serviço ---
+local_selecionado = st.selectbox("Selecione o Local:", options=df['local'].unique())
+df_filtrado = df[df['local'] == local_selecionado]
 
-    excel_data = to_excel(df_export)
+servico_selecionado = st.selectbox("Selecione o Serviço:", options=df_filtrado['serviço'].unique())
+df_servico = df_filtrado[df_filtrado['serviço'] == servico_selecionado]
 
-    st.download_button(
-        label="Clique para baixar o arquivo Excel",
-        data=excel_data,
-        file_name='medicoes_mes.xlsx',
-        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    )
+st.write(f"Unidade do serviço: {df_servico['unidade'].values[0]}")
+
+# --- Entrada da medição ---
+medicao = st.number_input("Digite a medição (%) para este serviço:", min_value=0.0, max_value=100.0, step=0.1)
+
+# --- Botão para salvar ---
+if st.button("Salvar medição"):
+
+    # Adiciona ou atualiza uma coluna 'medição' no DataFrame original para essa linha
+    idx = df_servico.index[0]  # Pega o índice correto
+    df.at[idx, 'medição'] = medicao
+
+    # Salva tudo no Excel (substitui o arquivo)
+    df.to_excel(ARQUIVO_PLANILHA, index=False)
+
+    st.success(f"Medição de {medicao}% salva para Local '{local_selecionado}' e Serviço '{servico_selecionado}'.")
+
+# --- Mostrar tabela atualizada ---
+st.write("Dados atuais da planilha:")
+st.dataframe(df)
+
+# --- Botão exportar ---
+if st.button("Exportar para Excel"):
+
+    nome_export = os.path.join(DATA_DIR, "medicao_exportada.xlsx")
+    df.to_excel(nome_export, index=False)
+    st.success(f"Arquivo exportado: {nome_export}")
+    st.write(f"Baixe a planilha exportada em: {nome_export} (no servidor)")
+
